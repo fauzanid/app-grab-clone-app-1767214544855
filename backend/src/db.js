@@ -46,8 +46,20 @@ export function initDatabase() {
       available_rooms INTEGER DEFAULT 10,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+    
+    CREATE TABLE IF NOT EXISTS restaurants (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      cuisine TEXT NOT NULL,
+      location TEXT NOT NULL,
+      rating REAL DEFAULT 4.0,
+      delivery_time INTEGER DEFAULT 30,
+      menu TEXT,
+      description TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
-  console.log('Database initialized with Grab clone and hotels tables');
+  console.log('Database initialized with Grab clone, hotels, and restaurants tables');
 }
 
 export { db };

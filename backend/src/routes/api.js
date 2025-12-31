@@ -253,4 +253,153 @@ router.post('/hotels/:id/book', (req, res) => {
   }
 });
 
+// Restaurants API endpoints
+router.get('/restaurants', (req, res) => {
+  try {
+    const { cuisine, location, min_rating, max_delivery_time } = req.query;
+    let query = 'SELECT * FROM restaurants WHERE 1=1';
+    const params = [];
+    
+    if (cuisine) {
+      query += ' AND cuisine LIKE ?';
+      params.push(`%${cuisine}%`);
+    }
+    
+    if (location) {
+      query += ' AND location LIKE ?';
+      params.push(`%${location}%`);
+    }
+    
+    if (min_rating) {
+      query += ' AND rating >= ?';
+      params.push(parseFloat(min_rating));
+    }
+    
+    if (max_delivery_time) {
+      query += ' AND delivery_time <= ?';
+      params.push(parseInt(max_delivery_time));
+    }
+    
+    query += ' ORDER BY rating DESC, created_at DESC';
+    
+    const stmt = db.prepare(query);
+    const restaurants = stmt.all(...params);
+    res.json(restaurants);
+  } catch (error) {
+    console.error('Error fetching restaurants:', error);
+    res.status(500).json({ error: 'Failed to fetch restaurants' });
+  }
+});
+
+router.post('/restaurants', (req, res) => {
+  try {
+    const { 
+      name, 
+      cuisine, 
+      location, 
+      rating = 4.0, 
+      delivery_time = 30, 
+      menu = '', 
+      description = '' 
+    } = req.body;
+    
+    if (!name || !cuisine || !location) {
+      return res.status(400).json({ error: 'Name, cuisine, and location are required' });
+    }
+    
+    if (rating < 0 || rating > 5) {
+      return res.status(400).json({ error: 'Rating must be between 0 and 5' });
+    }
+    
+    if (delivery_time <= 0) {
+      return res.status(400).json({ error: 'Delivery time must be greater than 0' });
+    }
+    
+    const stmt = db.prepare(`
+      INSERT INTO restaurants (name, cuisine, location, rating, delivery_time, menu, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    const result = stmt.run(name, cuisine, location, rating, delivery_time, menu, description);
+    
+    const newRestaurant = {
+      id: result.lastInsertRowid,
+      name,
+      cuisine,
+      location,
+      rating,
+      delivery_time,
+      menu,
+      description,
+      created_at: new Date().toISOString()
+    };
+    
+    res.status(201).json(newRestaurant);
+  } catch (error) {
+    console.error('Error creating restaurant:', error);
+    res.status(500).json({ error: 'Failed to create restaurant' });
+  }
+});
+
+router.delete('/restaurants/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const stmt = db.prepare('DELETE FROM restaurants WHERE id = ?');
+    const result = stmt.run(id);
+    
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+    
+    res.json({ message: 'Restaurant deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting restaurant:', error);
+    res.status(500).json({ error: 'Failed to delete restaurant' });
+  }
+});
+
+// Order from restaurant
+router.post('/restaurants/:id/order', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { items = [], special_instructions = '' } = req.body;
+    
+    if (!items.length) {
+      return res.status(400).json({ error: 'Order must contain at least one item' });
+    }
+    
+    const getRestaurant = db.prepare('SELECT * FROM restaurants WHERE id = ?');
+    const restaurant = getRestaurant.get(id);
+    
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+    
+    // Calculate estimated total (simplified)
+    const estimatedTotal = items.reduce((sum, item) => {
+      return sum + (item.price || 0) * (item.quantity || 1);
+    }, 0);
+    
+    const estimatedDelivery = new Date();
+    estimatedDelivery.setMinutes(estimatedDelivery.getMinutes() + restaurant.delivery_time);
+    
+    res.json({
+      message: 'Order placed successfully',
+      order: {
+        restaurant_id: id,
+        restaurant_name: restaurant.name,
+        items,
+        special_instructions,
+        estimated_total: estimatedTotal,
+        estimated_delivery: estimatedDelivery.toISOString(),
+        status: 'confirmed'
+      }
+    });
+  } catch (error) {
+    console.error('Error placing order:', error);
+    res.status(500).json({ error: 'Failed to place order' });
+  }
+});
+
 export { router as apiRoutes };
