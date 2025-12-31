@@ -1,179 +1,256 @@
-import { Router } from 'express';
+import express from 'express';
 import { db } from '../db.js';
 
-export const apiRoutes = Router();
+const router = express.Router();
 
-// Users routes
-apiRoutes.get('/users', (req, res) => {
-  const users = db.prepare('SELECT * FROM users ORDER BY created_at DESC').all();
-  res.json(users);
-});
-
-apiRoutes.post('/users', (req, res) => {
-  const { email, name } = req.body;
+// Existing rides endpoints
+router.get('/rides', (req, res) => {
   try {
-    const result = db.prepare('INSERT INTO users (email, name) VALUES (?, ?)').run(email, name);
-    res.status(201).json({ id: result.lastInsertRowid, email, name });
-  } catch (error) {
-    res.status(400).json({ error: error.message });
-  }
-});
-
-// Items routes (legacy)
-apiRoutes.get('/items', (req, res) => {
-  const items = db.prepare('SELECT * FROM items ORDER BY created_at DESC').all();
-  res.json(items);
-});
-
-apiRoutes.post('/items', (req, res) => {
-  const { title, description, user_id } = req.body;
-  const result = db.prepare('INSERT INTO items (title, description, user_id) VALUES (?, ?, ?)').run(title, description, user_id);
-  res.status(201).json({ id: result.lastInsertRowid, title, description, user_id });
-});
-
-apiRoutes.delete('/items/:id', (req, res) => {
-  db.prepare('DELETE FROM items WHERE id = ?').run(req.params.id);
-  res.status(204).send();
-});
-
-// Rides routes
-apiRoutes.get('/rides', (req, res) => {
-  try {
-    const rides = db.prepare(`
-      SELECT r.*, d.name as driver_name 
-      FROM rides r 
-      LEFT JOIN drivers d ON r.driver_id = d.id 
-      ORDER BY r.created_at DESC
-    `).all();
+    const stmt = db.prepare('SELECT * FROM rides ORDER BY created_at DESC');
+    const rides = stmt.all();
     res.json(rides);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Error fetching rides:', error);
+    res.status(500).json({ error: 'Failed to fetch rides' });
   }
 });
 
-apiRoutes.post('/rides', (req, res) => {
-  const { pickup, destination, status = 'pending' } = req.body;
-  
-  if (!pickup || !destination) {
-    return res.status(400).json({ error: 'Pickup and destination are required' });
-  }
-  
+router.post('/rides', (req, res) => {
   try {
-    const result = db.prepare(`
-      INSERT INTO rides (pickup, destination, status) 
-      VALUES (?, ?, ?)
-    `).run(pickup, destination, status);
+    const { pickup, destination, status = 'pending' } = req.body;
     
-    const newRide = db.prepare('SELECT * FROM rides WHERE id = ?').get(result.lastInsertRowid);
-    res.status(201).json(newRide);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-apiRoutes.post('/rides/:id/accept', (req, res) => {
-  const { id } = req.params;
-  const { driver_id } = req.body;
-  
-  if (!driver_id) {
-    return res.status(400).json({ error: 'Driver ID is required' });
-  }
-  
-  try {
-    db.prepare(`
-      UPDATE rides 
-      SET driver_id = ?, status = 'accepted' 
-      WHERE id = ? AND status = 'pending'
-    `).run(driver_id, id);
-    
-    const updatedRide = db.prepare(`
-      SELECT r.*, d.name as driver_name 
-      FROM rides r 
-      LEFT JOIN drivers d ON r.driver_id = d.id 
-      WHERE r.id = ?
-    `).get(id);
-    
-    if (!updatedRide) {
-      return res.status(404).json({ error: 'Ride not found or already accepted' });
+    if (!pickup || !destination) {
+      return res.status(400).json({ error: 'Pickup and destination are required' });
     }
     
-    res.json(updatedRide);
+    const stmt = db.prepare('INSERT INTO rides (pickup, destination, status) VALUES (?, ?, ?)');
+    const result = stmt.run(pickup, destination, status);
+    
+    const newRide = {
+      id: result.lastInsertRowid,
+      pickup,
+      destination,
+      status,
+      driver_id: null,
+      created_at: new Date().toISOString()
+    };
+    
+    res.status(201).json(newRide);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Error creating ride:', error);
+    res.status(500).json({ error: 'Failed to create ride' });
   }
 });
 
-apiRoutes.post('/rides/:id/complete', (req, res) => {
-  const { id } = req.params;
-  
+router.post('/rides/:id/accept', (req, res) => {
   try {
-    db.prepare(`
-      UPDATE rides 
-      SET status = 'completed' 
-      WHERE id = ?
-    `).run(id);
+    const { id } = req.params;
+    const { driver_id } = req.body;
     
-    const updatedRide = db.prepare(`
-      SELECT r.*, d.name as driver_name 
-      FROM rides r 
-      LEFT JOIN drivers d ON r.driver_id = d.id 
-      WHERE r.id = ?
-    `).get(id);
+    if (!driver_id) {
+      return res.status(400).json({ error: 'Driver ID is required' });
+    }
     
-    if (!updatedRide) {
+    const stmt = db.prepare('UPDATE rides SET status = ?, driver_id = ? WHERE id = ?');
+    const result = stmt.run('accepted', driver_id, id);
+    
+    if (result.changes === 0) {
       return res.status(404).json({ error: 'Ride not found' });
     }
     
+    const getRide = db.prepare('SELECT * FROM rides WHERE id = ?');
+    const updatedRide = getRide.get(id);
+    
     res.json(updatedRide);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Error accepting ride:', error);
+    res.status(500).json({ error: 'Failed to accept ride' });
   }
 });
 
-// Drivers routes
-apiRoutes.get('/drivers', (req, res) => {
+router.post('/rides/:id/complete', (req, res) => {
   try {
-    const drivers = db.prepare('SELECT * FROM drivers ORDER BY created_at DESC').all();
-    res.json(drivers);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-apiRoutes.post('/drivers', (req, res) => {
-  const { name, status = 'available' } = req.body;
-  
-  if (!name) {
-    return res.status(400).json({ error: 'Driver name is required' });
-  }
-  
-  try {
-    const result = db.prepare(`
-      INSERT INTO drivers (name, status) 
-      VALUES (?, ?)
-    `).run(name, status);
+    const { id } = req.params;
     
-    const newDriver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(result.lastInsertRowid);
-    res.status(201).json(newDriver);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-apiRoutes.put('/drivers/:id', (req, res) => {
-  const { id } = req.params;
-  const { status } = req.body;
-  
-  try {
-    db.prepare('UPDATE drivers SET status = ? WHERE id = ?').run(status, id);
-    const updatedDriver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(id);
+    const stmt = db.prepare('UPDATE rides SET status = ? WHERE id = ?');
+    const result = stmt.run('completed', id);
     
-    if (!updatedDriver) {
-      return res.status(404).json({ error: 'Driver not found' });
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Ride not found' });
     }
     
-    res.json(updatedDriver);
+    const getRide = db.prepare('SELECT * FROM rides WHERE id = ?');
+    const updatedRide = getRide.get(id);
+    
+    res.json(updatedRide);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Error completing ride:', error);
+    res.status(500).json({ error: 'Failed to complete ride' });
   }
 });
+
+// Existing drivers endpoints
+router.get('/drivers', (req, res) => {
+  try {
+    const stmt = db.prepare('SELECT * FROM drivers ORDER BY created_at DESC');
+    const drivers = stmt.all();
+    res.json(drivers);
+  } catch (error) {
+    console.error('Error fetching drivers:', error);
+    res.status(500).json({ error: 'Failed to fetch drivers' });
+  }
+});
+
+router.post('/drivers', (req, res) => {
+  try {
+    const { name, status = 'available' } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+    
+    const stmt = db.prepare('INSERT INTO drivers (name, status) VALUES (?, ?)');
+    const result = stmt.run(name, status);
+    
+    const newDriver = {
+      id: result.lastInsertRowid,
+      name,
+      status,
+      created_at: new Date().toISOString()
+    };
+    
+    res.status(201).json(newDriver);
+  } catch (error) {
+    console.error('Error creating driver:', error);
+    res.status(500).json({ error: 'Failed to create driver' });
+  }
+});
+
+// Hotels API endpoints
+router.get('/hotels', (req, res) => {
+  try {
+    const { location, min_price, max_price } = req.query;
+    let query = 'SELECT * FROM hotels WHERE available_rooms > 0';
+    const params = [];
+    
+    if (location) {
+      query += ' AND location LIKE ?';
+      params.push(`%${location}%`);
+    }
+    
+    if (min_price) {
+      query += ' AND price_per_night >= ?';
+      params.push(parseFloat(min_price));
+    }
+    
+    if (max_price) {
+      query += ' AND price_per_night <= ?';
+      params.push(parseFloat(max_price));
+    }
+    
+    query += ' ORDER BY created_at DESC';
+    
+    const stmt = db.prepare(query);
+    const hotels = stmt.all(...params);
+    res.json(hotels);
+  } catch (error) {
+    console.error('Error fetching hotels:', error);
+    res.status(500).json({ error: 'Failed to fetch hotels' });
+  }
+});
+
+router.post('/hotels', (req, res) => {
+  try {
+    const { name, location, price_per_night, rating = 4.0, amenities = '', description = '', available_rooms = 10 } = req.body;
+    
+    if (!name || !location || !price_per_night) {
+      return res.status(400).json({ error: 'Name, location, and price per night are required' });
+    }
+    
+    if (price_per_night <= 0) {
+      return res.status(400).json({ error: 'Price must be greater than 0' });
+    }
+    
+    const stmt = db.prepare(`
+      INSERT INTO hotels (name, location, price_per_night, rating, amenities, description, available_rooms)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    const result = stmt.run(name, location, price_per_night, rating, amenities, description, available_rooms);
+    
+    const newHotel = {
+      id: result.lastInsertRowid,
+      name,
+      location,
+      price_per_night,
+      rating,
+      amenities,
+      description,
+      available_rooms,
+      created_at: new Date().toISOString()
+    };
+    
+    res.status(201).json(newHotel);
+  } catch (error) {
+    console.error('Error creating hotel:', error);
+    res.status(500).json({ error: 'Failed to create hotel' });
+  }
+});
+
+router.delete('/hotels/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const stmt = db.prepare('DELETE FROM hotels WHERE id = ?');
+    const result = stmt.run(id);
+    
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Hotel not found' });
+    }
+    
+    res.json({ message: 'Hotel deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting hotel:', error);
+    res.status(500).json({ error: 'Failed to delete hotel' });
+  }
+});
+
+// Book hotel room
+router.post('/hotels/:id/book', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nights = 1 } = req.body;
+    
+    const getHotel = db.prepare('SELECT * FROM hotels WHERE id = ?');
+    const hotel = getHotel.get(id);
+    
+    if (!hotel) {
+      return res.status(404).json({ error: 'Hotel not found' });
+    }
+    
+    if (hotel.available_rooms <= 0) {
+      return res.status(400).json({ error: 'No rooms available' });
+    }
+    
+    const updateHotel = db.prepare('UPDATE hotels SET available_rooms = available_rooms - 1 WHERE id = ?');
+    updateHotel.run(id);
+    
+    const updatedHotel = getHotel.get(id);
+    const totalCost = hotel.price_per_night * nights;
+    
+    res.json({
+      message: 'Hotel booked successfully',
+      hotel: updatedHotel,
+      booking: {
+        hotel_id: id,
+        nights,
+        total_cost: totalCost
+      }
+    });
+  } catch (error) {
+    console.error('Error booking hotel:', error);
+    res.status(500).json({ error: 'Failed to book hotel' });
+  }
+});
+
+export { router as apiRoutes };

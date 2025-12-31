@@ -34,8 +34,20 @@ export function initDatabase() {
       status TEXT DEFAULT 'pending',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+    
+    CREATE TABLE IF NOT EXISTS hotels (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      location TEXT NOT NULL,
+      price_per_night REAL NOT NULL,
+      rating REAL DEFAULT 4.0,
+      amenities TEXT,
+      description TEXT,
+      available_rooms INTEGER DEFAULT 10,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
-  console.log('Database initialized with Grab clone tables');
+  console.log('Database initialized with Grab clone and hotels tables');
 }
 
 export { db };
